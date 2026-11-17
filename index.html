@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>訂購單</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  :root { --bg:#f6f6f4; --card:#fff; --text:#222; --sub:#777; --line:#e4e4e0; --main:#1a73e8; --red:#d93025; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#161616; --card:#222; --text:#eee; --sub:#999; --line:#383838; --main:#6ea8fe; --red:#ff6b61; } }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,"Noto Sans TC",sans-serif; background:var(--bg); color:var(--text); padding-bottom:90px; }
+  header { padding:14px 16px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); background:var(--card); position:sticky; top:0; z-index:5; }
+  nav { display:flex; gap:8px; padding:10px 16px; }
+  nav button { flex:1; padding:10px; border:1px solid var(--line); background:var(--card); color:var(--text); border-radius:8px; font-size:15px; }
+  nav button.on { background:var(--main); color:#fff; border-color:var(--main); }
+  .wrap { padding:0 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:12px; display:flex; gap:12px; }
+  .card img { width:84px; height:84px; object-fit:cover; border-radius:8px; background:var(--line); }
+  .info { flex:1; min-width:0; }
+  .name { font-weight:600; margin-bottom:4px; }
+  .old { text-decoration:line-through; color:var(--sub); font-size:14px; margin-right:6px; }
+  .sale { color:var(--red); font-weight:700; }
+  .qty { display:flex; align-items:center; gap:8px; margin-top:8px; }
+  .qty button { width:34px; height:34px; border-radius:50%; border:1px solid var(--line); background:var(--card); color:var(--text); font-size:18px; }
+  .qty input { width:54px; text-align:center; padding:6px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--text); font-size:16px; }
+  .bar { position:fixed; bottom:0; left:0; right:0; background:var(--card); border-top:1px solid var(--line); padding:12px 16px calc(12px + env(safe-area-inset-bottom)); display:flex; justify-content:space-between; align-items:center; }
+  .bar b { font-size:20px; }
+  .go { background:var(--main); color:#fff; border:0; padding:12px 24px; border-radius:10px; font-size:16px; }
+  .go:disabled { opacity:.5; }
+  .cancel { color:var(--red); border:1px solid var(--red); background:none; padding:6px 12px; border-radius:8px; }
+  .tag { font-size:12px; padding:2px 8px; border-radius:10px; background:var(--line); }
+  .order { display:block; }
+  .order .row { display:flex; justify-content:space-between; font-size:14px; padding:2px 0; }
+  #login, #msg { text-align:center; padding:40px 16px; color:var(--sub); }
+  #toast { position:fixed; top:70px; left:50%; transform:translateX(-50%); background:#333; color:#fff; padding:10px 18px; border-radius:20px; display:none; z-index:9; max-width:90%; }
+</style>
+</head>
+<body>
+<header><b>訂購單</b><span id="who" style="font-size:13px;color:var(--sub)"></span></header>
+<div id="login"><p>請使用被授權的 Google 帳號登入</p><div id="gbtn" style="display:inline-block"></div></div>
+<div id="app" style="display:none">
+  <nav><button id="t1" class="on" onclick="tab(1)">下單</button><button id="t2" onclick="tab(2)">我的訂單</button></nav>
+  <div class="wrap" id="list"></div>
+  <div class="bar" id="bar"><span>合計 <b id="total">$0</b></span><button class="go" id="submit" onclick="submitOrder()" disabled>送出訂單</button></div>
+</div>
+<div id="toast"></div>
+
+<script>
+// ===== 設定：換成你自己的 =====
+const CLIENT_ID = '貼上你的OAuth用戶端ID.apps.googleusercontent.com';
+const API = '貼上Apps Script網頁應用程式網址/exec';
+
+let token = '', products = [], qty = {}, tabNo = 1;
+const $ = id => document.getElementById(id);
+const money = n => '$' + Number(n).toLocaleString();
+const toast = m => { const t = $('toast'); t.textContent = m; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 2800); };
+
+async function api(action, data) {
+  const r = await fetch(API, { method: 'POST', body: JSON.stringify(Object.assign({ idToken: token, action }, data)) });
+  const j = await r.json();
+  if (!j.ok) throw new Error(j.error);
+  return j.data;
+}
+
+window.onload = () => {
+  const iv = setInterval(() => {
+    if (!window.google) return;
+    clearInterval(iv);
+    google.accounts.id.initialize({ client_id: CLIENT_ID, callback: onLogin });
+    google.accounts.id.renderButton($('gbtn'), { theme: 'outline', size: 'large', locale: 'zh-TW' });
+  }, 200);
+};
+
+async function onLogin(resp) {
+  token = resp.credential;
+  try {
+    const u = await api('me');
+    $('who').textContent = u.name;
+    $('login').style.display = 'none';
+    $('app').style.display = 'block';
+    products = await api('listProducts');
+    tab(1);
+  } catch (e) { toast(e.message); }
+}
+
+function tab(n) {
+  tabNo = n;
+  $('t1').className = n === 1 ? 'on' : ''; $('t2').className = n === 2 ? 'on' : '';
+  $('bar').style.display = n === 1 ? 'flex' : 'none';
+  n === 1 ? renderProducts() : renderOrders();
+}
+
+function renderProducts() {
+  $('list').innerHTML = products.map(p => `
+    <div class="card">
+      <img src="${p.photo || ''}" alt="" loading="lazy">
+      <div class="info">
+        <div class="name">${p.name}</div>
+        <div>${p.sale != null ? `<span class="old">${money(p.price)}</span><span class="sale">${money(p.sale)}</span>` : `<span class="sale">${money(p.price)}</span>`}</div>
+        <div class="qty">
+          <button onclick="step('${p.id}',-1)">−</button>
+          <input type="number" min="0" inputmode="numeric" id="q_${p.id}" value="${qty[p.id] || 0}" onchange="setQ('${p.id}',this.value)">
+          <button onclick="step('${p.id}',1)">＋</button>
+        </div>
+      </div>
+    </div>`).join('') || '<div id="msg">目前沒有商品</div>';
+  calc();
+}
+function step(id, d) { setQ(id, (qty[id] || 0) + d); $('q_' + id).value = qty[id]; }
+function setQ(id, v) { v = Math.max(0, parseInt(v) || 0); qty[id] = v; calc(); }
+function calc() {
+  let t = 0, n = 0;
+  products.forEach(p => { const q = qty[p.id] || 0; t += (p.sale != null ? p.sale : p.price) * q; n += q; });
+  $('total').textContent = money(t);
+  $('submit').disabled = n === 0;
+}
+
+async function submitOrder() {
+  const items = products.filter(p => qty[p.id] > 0).map(p => ({ id: p.id, qty: qty[p.id] }));
+  if (!confirm('確定送出訂單？')) return;
+  $('submit').disabled = true;
+  try {
+    const r = await api('placeOrder', { items });
+    qty = {};
+    toast('已下單：' + r.orderNo + '，合計 ' + money(r.total));
+    renderProducts();
+  } catch (e) { toast(e.message); calc(); }
+}
+
+async function renderOrders() {
+  $('list').innerHTML = '<div id="msg">載入中…</div>';
+  try {
+    const os = await api('myOrders');
+    $('list').innerHTML = os.map(o => `
+      <div class="card order">
+        <div class="row"><b>${o.no}</b><span class="tag">${o.status}${o.status === '有效' && !o.canCancel ? '・已鎖定' : ''}</span></div>
+        <div class="row" style="color:var(--sub)"><span>${new Date(o.time).toLocaleString('zh-TW')}</span><span>${money(o.total)}</span></div>
+        <hr style="border:0;border-top:1px solid var(--line);width:100%">
+        ${o.items.map(i => `<div class="row"><span>${i.name} × ${i.qty}</span><span>已到 ${i.arrived}／已出 ${i.shipped}</span></div>`).join('')}
+        ${o.canCancel ? `<div style="text-align:right;margin-top:8px"><button class="cancel" onclick="cancelOrder('${o.no}')">取消訂單</button></div>` : ''}
+      </div>`).join('') || '<div id="msg">還沒有訂單</div>';
+  } catch (e) { toast(e.message); }
+}
+
+async function cancelOrder(no) {
+  if (!confirm('確定取消 ' + no + '？')) return;
+  try { await api('cancelOrder', { orderNo: no }); toast('已取消'); renderOrders(); }
+  catch (e) { toast(e.message); renderOrders(); }
+}
+</script>
+</body>
+</html>
