@@ -39,6 +39,10 @@
   .row.sub { font-size:13px; color:var(--sub); flex-wrap:wrap; gap:2px 12px; margin-bottom:4px; }
   nav { overflow-x:auto; } nav button { white-space:nowrap; flex:1 0 auto; padding:10px 14px; }
   #busy { position:fixed; top:0; left:0; right:0; text-align:center; background:var(--main); color:#fff; font-size:13px; padding:3px; display:none; z-index:20; }
+  #shipm { position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:30; display:none; overflow:auto; }
+  #shipm .box { background:var(--card); margin:20px auto; max-width:520px; border-radius:14px; padding:16px; }
+  #shipm input.f { width:100%; padding:10px; margin:4px 0 10px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--text); font-size:16px; }
+  #sigc { width:100%; height:180px; background:#fff; border:1px solid var(--line); border-radius:8px; touch-action:none; display:block; }
 </style>
 </head>
 <body>
@@ -49,6 +53,7 @@
   <div class="wrap" id="list"></div>
   <div class="bar" id="bar"><span>優惠價合計 <b id="total">$0</b></span><button class="go" id="submit" onclick="submitOrder()" disabled>送出訂單</button></div>
 </div>
+<div id="shipm"></div>
 <div id="busy">處理中…</div>
 <div id="toast"></div>
 
@@ -86,7 +91,7 @@ async function onLogin(resp) {
   token = resp.credential;
   try {
     const init = await api('init'); const u = init.user;
-    $('who').textContent = u.name;
+    $('who').textContent = u.name + '・' + (init.version || '後端舊版');
     if (u.role === 'admin') $('t4').style.display = '';
     if (u.role === 'admin' || u.role === '採購') $('t5').style.display = '';
     $('login').style.display = 'none';
@@ -187,7 +192,7 @@ async function confirmPay(no, on) {
 // ===== 叫貨後台（admin / 採購）=====
 const inp = 'padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--text)';
 const hr = '<hr style="border:0;border-top:1px solid var(--line);width:100%">';
-let BK = null;
+let BK = null, ORD = [];
 const ty = i => i.self ? '自用' : '優惠';
 const itemsTxt = o => o.items.map(i => i.name + '・' + ty(i) + '×' + i.qty).join('、');
 
@@ -221,6 +226,7 @@ async function renderBackend() {
         <div class="row sub"><span>${itemsTxt(o)}</span><span>${o.paid ? '✓ 已收款' : `<button class="cancel" onclick="payOrder('${o.no}')">確認收款</button>`}</span></div>`).join('') || '<div class="row">沒有未鎖單訂單</div>') +
       (un.length ? `<div class="row" style="margin-top:8px"><span>工廠付款單號</span><input id="payNo" style="width:50%;${inp}"></div><div style="text-align:right;margin-top:8px"><button class="go" onclick="doLock()">鎖單並叫貨</button></div>` : '') + `</div>
       <div class="card order"><b>② 已鎖單訂單（填快遞單號、勾到貨、必要時拆單）</b>` + (lk.map(lockedRow).join('') || '<div class="row">沒有訂單</div>') + `</div>
+      <div class="card order"><b>出貨單（已簽收）</b>` + ((BK.ships || []).map(x => `<div class="row"><b>${x.no}</b><span>${x.status}</span></div><div class="row sub"><span>下游：${x.down || '-'}　簽收：${x.signer || '-'}</span><span>${x.pdf ? `<a href="${x.pdf}" target="_blank">PDF</a>` : ''}</span></div>`).join('') || '<div class="row">還沒有出貨單</div>') + `</div>
       <div class="card order"><b>叫貨批次</b>` + (BK.batches.map(b => `<div class="row"><b>${b.no}</b><span>${b.orders.length} 張訂單</span></div>
         <div class="row sub"><span>${b.items.map(i => i.name + '・' + i.t + '×' + i.qty).join('、')}</span></div>
         <div class="row"><span>付款單號</span><span><input id="bp_${b.no}" value="${b.payNo || ''}" style="width:130px;${inp}"> <button class="cancel" onclick="saveBatchPay('${b.no}')">儲存</button></span></div>${hr}`).join('') || '<div class="row">還沒有批次</div>') + `</div>`;
@@ -254,7 +260,7 @@ async function doSplit(no) {
 async function renderOrders() {
   $('list').innerHTML = '<div id="msg">載入中…</div>';
   try {
-    const os = await api('myOrders');
+    const os = await api('myOrders'); ORD = os;
     $('list').innerHTML = os.map(o => `
       <div class="card order">
         <div class="row"><b>${o.no}</b><span class="tag">${o.stage}</span></div>
@@ -264,8 +270,58 @@ async function renderOrders() {
         ${hr}
         ${o.items.map(i => `<div class="row"><span>${i.name}${i.self ? '（自用）' : ''} × ${i.qty}</span><span>${money(i.price)}</span></div>`).join('')}
         ${o.canCancel ? `<div style="text-align:right;margin-top:8px"><button class="cancel" onclick="cancelOrder('${o.no}')">取消訂單</button></div>` : ''}
+        ${o.canShip ? `<div style="text-align:right;margin-top:8px"><button class="go" onclick="openShip('${o.no}')">開出貨單・簽收</button></div>` : ''}
       </div>`).join('') || '<div id="msg">還沒有訂單</div>';
   } catch (e) { toast(e.message); }
+}
+
+
+// ===== 出貨單・手機簽收 =====
+let sigDrawn = false;
+function openShip(no) {
+  const o = ORD.find(x => x.no === no);
+  const its = o.items.filter(i => !i.self);
+  if (!its.length) return toast('此訂單沒有需簽收的品項');
+  let tot = 0; its.forEach(i => tot += i.price * i.qty);
+  $('shipm').innerHTML = `<div class="box"><b style="font-size:18px">出貨單　${o.no}</b>
+    <div class="row sub" style="margin-top:6px"><span>付款單號：${o.payNo || '-'}</span><span>快遞單號：${o.track || '-'}</span></div>
+    ${its.map(i => `<div class="row"><span>${i.name} × ${i.qty}</span><span>${money(i.price * i.qty)}</span></div>`).join('')}
+    <div class="row"><b>合計</b><b>${money(tot)}</b></div>
+    <div style="margin-top:10px">下游客戶名稱<input class="f" id="sg_down"></div>
+    <div>下游客戶電話<input class="f" id="sg_phone" inputmode="tel"></div>
+    <div>簽收人姓名<input class="f" id="sg_name"></div>
+    <div>請簽收人在下方簽名</div>
+    <canvas id="sigc" width="720" height="360"></canvas>
+    <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
+      <button class="cancel" style="color:var(--text);border-color:var(--line)" onclick="clearSig()">清除簽名</button>
+      <button class="cancel" style="color:var(--text);border-color:var(--line)" onclick="closeShip()">取消</button>
+      <button class="go" id="sg_ok" onclick="submitShip('${o.no}')">確認簽收</button></div></div>`;
+  $('shipm').style.display = 'block';
+  initSig();
+}
+function closeShip() { $('shipm').style.display = 'none'; $('shipm').innerHTML = ''; }
+function initSig() {
+  const c = $('sigc'), x = c.getContext('2d');
+  sigDrawn = false; x.lineWidth = 4; x.lineCap = 'round'; x.lineJoin = 'round'; x.strokeStyle = '#000';
+  let down = false;
+  const pt = e => { const r = c.getBoundingClientRect(); return [(e.clientX - r.left) * c.width / r.width, (e.clientY - r.top) * c.height / r.height]; };
+  c.onpointerdown = e => { e.preventDefault(); down = true; c.setPointerCapture(e.pointerId); const p = pt(e); x.beginPath(); x.moveTo(p[0], p[1]); x.lineTo(p[0] + .1, p[1]); x.stroke(); sigDrawn = true; };
+  c.onpointermove = e => { if (!down) return; e.preventDefault(); const p = pt(e); x.lineTo(p[0], p[1]); x.stroke(); };
+  c.onpointerup = c.onpointercancel = () => { down = false; };
+}
+function clearSig() { const c = $('sigc'); c.getContext('2d').clearRect(0, 0, c.width, c.height); sigDrawn = false; }
+async function submitShip(no) {
+  const signer = $('sg_name').value.trim();
+  if (!signer) return toast('請輸入簽收人姓名');
+  if (!sigDrawn) return toast('請先簽名');
+  // 白底輸出，避免 PDF 透明背景
+  const c = $('sigc'), t = document.createElement('canvas'); t.width = c.width; t.height = c.height;
+  const tx = t.getContext('2d'); tx.fillStyle = '#fff'; tx.fillRect(0, 0, t.width, t.height); tx.drawImage(c, 0, 0);
+  $('sg_ok').disabled = true;
+  try {
+    const r = await api('signShipment', { orderNo: no, down: $('sg_down').value.trim(), phone: $('sg_phone').value.trim(), signer, signature: t.toDataURL('image/png') });
+    closeShip(); toast('簽收完成：' + r.no + (r.mailed ? '' : '（備份信寄送失敗）')); renderOrders();
+  } catch (e) { toast(e.message); $('sg_ok').disabled = false; }
 }
 
 async function cancelOrder(no) {
