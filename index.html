@@ -37,13 +37,14 @@
   .selfbox { display:block; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:12px; }
   .selfrow { margin-top:8px; padding-top:8px; border-top:1px dashed var(--line); }
   .row.sub { font-size:13px; color:var(--sub); flex-wrap:wrap; gap:2px 12px; margin-bottom:4px; }
+  nav { overflow-x:auto; } nav button { white-space:nowrap; flex:1 0 auto; padding:10px 14px; }
 </style>
 </head>
 <body>
 <header><b>訂購單</b><span id="who" style="font-size:13px;color:var(--sub)"></span></header>
 <div id="login"><p>請使用被授權的 Google 帳號登入</p><div id="gbtn" style="display:inline-block"></div></div>
 <div id="app" style="display:none">
-  <nav><button id="t1" class="on" onclick="tab(1)">下單</button><button id="t2" onclick="tab(2)">我的訂單</button><button id="t3" onclick="tab(3)">實際付款</button><button id="t4" onclick="tab(4)" style="display:none">收款確認</button></nav>
+  <nav><button id="t1" class="on" onclick="tab(1)">下單</button><button id="t2" onclick="tab(2)">我的訂單</button><button id="t3" onclick="tab(3)">實際付款</button><button id="t4" onclick="tab(4)" style="display:none">收款確認</button><button id="t5" onclick="tab(5)" style="display:none">叫貨後台</button></nav>
   <div class="wrap" id="list"></div>
   <div class="bar" id="bar"><span>優惠價合計 <b id="total">$0</b></span><button class="go" id="submit" onclick="submitOrder()" disabled>送出訂單</button></div>
 </div>
@@ -81,6 +82,7 @@ async function onLogin(resp) {
     const u = await api('me');
     $('who').textContent = u.name;
     if (u.role === 'admin') $('t4').style.display = '';
+    if (u.role === 'admin' || u.role === '採購') $('t5').style.display = '';
     $('login').style.display = 'none';
     $('app').style.display = 'block';
     products = await api('listProducts');
@@ -90,9 +92,9 @@ async function onLogin(resp) {
 
 function tab(n) {
   tabNo = n;
-  [1, 2, 3, 4].forEach(k => $('t' + k).className = k === n ? 'on' : '');
+  [1, 2, 3, 4, 5].forEach(k => $('t' + k).className = k === n ? 'on' : '');
   $('bar').style.display = n === 1 ? 'flex' : 'none';
-  ({ 1: renderProducts, 2: renderOrders, 3: renderPay, 4: renderAdmin })[n]();
+  ({ 1: renderProducts, 2: renderOrders, 3: renderPay, 4: renderAdmin, 5: renderBackend })[n]();
 }
 
 function qtyRow(id, k, store) {
@@ -174,6 +176,49 @@ async function renderAdmin() {
 async function confirmPay(no, on) {
   try { await api('confirmPayment', { orderNo: no, confirm: on }); toast(on ? '已確認收款' : '已取消確認'); renderAdmin(); }
   catch (e) { toast(e.message); }
+}
+
+// ===== 叫貨後台（admin / 採購）=====
+const inp = 'padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--text)';
+function batchCard(b) {
+  return `<div class="card order">
+    <div class="row"><b>${b.no}</b><span class="tag">${b.ordered ? '已叫貨・' + b.status : '準備中（未鎖單）'}</span></div>
+    <div class="row sub"><span>${b.items.map(i => i.name + '×' + i.qty).join('、')}</span></div>
+    <div class="row sub"><span>訂單：${b.orders.join('、')}</span></div>
+    <div class="row"><span>付款單號</span><input id="pn_${b.no}" value="${b.paymentNo || ''}" style="width:55%;${inp}"></div>
+    <label class="row"><span>已收款（工廠）</span><input type="checkbox" id="pd_${b.no}" ${b.paid ? 'checked' : ''}></label>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+      <button class="cancel" style="color:var(--main);border-color:var(--main)" onclick="saveBatch('${b.no}')">儲存</button>
+      ${b.ordered ? '' : `<button class="go" onclick="markOrdered('${b.no}')">標記已叫貨並鎖單</button>`}
+    </div></div>`;
+}
+async function renderBackend() {
+  $('list').innerHTML = '<div id="msg">載入中…</div>';
+  try {
+    const d = await api('adminOrders');
+    const pend = d.orders.filter(o => !o.batch);
+    $('list').innerHTML =
+      `<div class="card order"><b>品項加總（有效訂單）</b>` +
+      (d.summary.map(s => `<div class="row"><span>${s.name}</span><span>全部 ${s.total}／未叫貨 ${s.pending}</span></div>` +
+        (s.pending ? `<div class="row sub"><span>${Object.keys(s.byCustomer).map(c => c + ' ' + s.byCustomer[c]).join('、')}</span></div>` : '')).join('') || '<div class="row">沒有訂單</div>') + `</div>` +
+      `<div class="card order"><b>未叫貨訂單</b>` +
+      (pend.map(o => `<label class="row"><span><input type="checkbox" class="pk" value="${o.no}"> ${o.no}　${o.cust}</span><span>${money(o.total)}</span></label>
+        <div class="row sub"><span>${o.items.map(i => i.name + (i.self ? '(自用)' : '') + '×' + i.qty).join('、')}</span></div>`).join('') || '<div class="row">沒有未叫貨訂單</div>') +
+      (pend.length ? `<div style="text-align:right;margin-top:8px"><button class="go" onclick="makeBatch()">用勾選訂單建立批次</button></div>` : '') + `</div>` +
+      d.batches.map(batchCard).join('');
+  } catch (e) { toast(e.message); }
+}
+async function makeBatch() {
+  const nos = [...document.querySelectorAll('.pk:checked')].map(x => x.value);
+  if (!nos.length) return toast('請先勾選訂單');
+  try { const r = await api('createBatch', { orderNos: nos }); toast('已建立 ' + r.batchNo); renderBackend(); } catch (e) { toast(e.message); }
+}
+async function saveBatch(no) {
+  try { await api('updateBatch', { batchNo: no, paymentNo: $('pn_' + no).value.trim(), paid: $('pd_' + no).checked }); toast('已儲存'); } catch (e) { toast(e.message); }
+}
+async function markOrdered(no) {
+  if (!confirm('標記已叫貨後，批次內的訂單會鎖定，客戶無法再取消。確定？')) return;
+  try { await api('markOrdered', { batchNo: no, paymentNo: $('pn_' + no).value.trim() }); toast('已叫貨，訂單已鎖定'); renderBackend(); } catch (e) { toast(e.message); }
 }
 
 async function renderOrders() {
