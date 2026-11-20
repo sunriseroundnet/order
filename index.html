@@ -51,8 +51,8 @@
 
 <script>
 // ===== 設定：換成你自己的 =====
-const CLIENT_ID = '741346122503-ognldu0voplsojqjk0cegrcrd4thun30.apps.googleusercontent.com';
-const API = 'https://script.google.com/macros/s/AKfycbwhrfM6ncR7qjASc65k4GivVmfPfrKjFS0Q6DGYrKDAsL7Y9BpL0WoeYHIGWMMbFQnD1Q/exec';
+const CLIENT_ID = '741346122503-ognldu0voplsojqjk0cegrcrd4thun30.apps.googleusercontent.c';
+const API =  'https://script.google.com/macros/s/AKfycbwhrfM6ncR7qjASc65k4GivVmfPfrKjFS0Q6DGYrKDAsL7Y9BpL0WoeYHIGWMMbFQnD1Q/exe';
 
 let token = '', products = [], qty = {}, sq = {}, selfMode = false, tabNo = 1;
 const $ = id => document.getElementById(id);
@@ -100,7 +100,7 @@ function qtyRow(id, k, store) {
 }
 
 function renderProducts() {
-  $('list').innerHTML = `<label class="selfbox"><input type="checkbox" ${selfMode ? 'checked' : ''} onchange="toggleSelf(this.checked)"> 自用（勾選後顯示自用價，並可填自用數量）</label>` +
+  $('list').innerHTML = `<label class="selfbox"><input type="checkbox" ${selfMode ? 'checked' : ''} onchange="toggleSelf(this.checked)"> 自用</label>` +
     products.map(p => `
     <div class="card">
       ${p.photo ? `<img src="${p.photo}" alt="" loading="lazy">` : '<div style="width:84px;height:84px;border-radius:8px;background:var(--line)"></div>'}
