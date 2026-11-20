@@ -186,45 +186,69 @@ async function confirmPay(no, on) {
 
 // ===== 叫貨後台（admin / 採購）=====
 const inp = 'padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--text)';
-function batchCard(b) {
-  return `<div class="card order">
-    <div class="row"><b>${b.no}</b><span class="tag">${b.ordered ? '已叫貨・' + b.status : '準備中（未鎖單）'}</span></div>
-    <div class="row sub"><span>${b.items.map(i => i.name + '×' + i.qty).join('、')}</span></div>
-    <div class="row sub"><span>訂單：${b.orders.join('、')}</span></div>
-    <div class="row"><span>付款單號</span><input id="pn_${b.no}" value="${b.paymentNo || ''}" style="width:55%;${inp}"></div>
-    <label class="row"><span>已收款（工廠）</span><input type="checkbox" id="pd_${b.no}" ${b.paid ? 'checked' : ''}></label>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
-      <button class="cancel" style="color:var(--main);border-color:var(--main)" onclick="saveBatch('${b.no}')">儲存</button>
-      ${b.ordered ? '' : `<button class="go" onclick="markOrdered('${b.no}')">標記已叫貨並鎖單</button>`}
-    </div></div>`;
+const hr = '<hr style="border:0;border-top:1px solid var(--line);width:100%">';
+let BK = null;
+const ty = i => i.self ? '自用' : '優惠';
+const itemsTxt = o => o.items.map(i => i.name + '・' + ty(i) + '×' + i.qty).join('、');
+
+function refreshSum() {
+  const picks = [...document.querySelectorAll('.pk:checked')].map(x => x.value);
+  const src = BK.orders.filter(o => !o.locked && (!picks.length || picks.includes(o.no)));
+  const m = {};
+  src.forEach(o => o.items.forEach(i => {
+    const k = i.id + '|' + ty(i), s = m[k] = m[k] || { name: i.name, t: ty(i), q: 0, by: {} };
+    s.q += i.qty; s.by[o.cust] = (s.by[o.cust] || 0) + i.qty;
+  }));
+  $('sumbox').innerHTML = `<b>彙整（${picks.length ? '已勾選 ' + picks.length + ' 張' : '全部未鎖單'}）</b>` +
+    (Object.keys(m).map(k => { const s = m[k]; return `<div class="row"><span>${s.name}・${s.t}</span><b>${s.q}</b></div><div class="row sub"><span>${Object.keys(s.by).map(c => c + ' ' + s.by[c]).join('、')}</span></div>`; }).join('') || '<div class="row">沒有訂單</div>');
+}
+function lockedRow(o) {
+  return `<div class="row"><b>${o.no}</b><span>${o.cust}　${o.arrived ? '已到貨' : '球拍飛行中'}</span></div>
+    <div class="row sub"><span>${itemsTxt(o)}</span></div>
+    <div class="row"><span>快遞單號</span><input id="tk_${o.no}" value="${o.track || ''}" style="width:55%;${inp}"></div>
+    <div class="row"><label><input type="checkbox" id="ar_${o.no}" ${o.arrived ? 'checked' : ''}> 已到貨</label>
+      <span><button class="cancel" onclick="splitUi('${o.no}')" ${o.arrived ? 'disabled' : ''}>拆單</button> <button class="go" style="padding:6px 14px" onclick="saveShip('${o.no}')">儲存</button></span></div>
+    <div id="sp_${o.no}"></div>${hr}`;
 }
 async function renderBackend() {
   $('list').innerHTML = '<div id="msg">載入中…</div>';
   try {
-    const d = await api('adminOrders');
-    const pend = d.orders.filter(o => !o.batch);
-    $('list').innerHTML =
-      `<div class="card order"><b>品項加總（有效訂單）</b>` +
-      (d.summary.map(s => `<div class="row"><span>${s.name}</span><span>全部 ${s.total}／未叫貨 ${s.pending}</span></div>` +
-        (s.pending ? `<div class="row sub"><span>${Object.keys(s.byCustomer).map(c => c + ' ' + s.byCustomer[c]).join('、')}</span></div>` : '')).join('') || '<div class="row">沒有訂單</div>') + `</div>` +
-      `<div class="card order"><b>未叫貨訂單</b>` +
-      (pend.map(o => `<label class="row"><span><input type="checkbox" class="pk" value="${o.no}"> ${o.no}　${o.cust}</span><span>${money(o.total)}</span></label>
-        <div class="row sub"><span>${o.items.map(i => i.name + (i.self ? '(自用)' : '') + '×' + i.qty).join('、')}</span></div>`).join('') || '<div class="row">沒有未叫貨訂單</div>') +
-      (pend.length ? `<div style="text-align:right;margin-top:8px"><button class="go" onclick="makeBatch()">用勾選訂單建立批次</button></div>` : '') + `</div>` +
-      d.batches.map(batchCard).join('');
+    BK = await api('adminOrders');
+    const un = BK.orders.filter(o => !o.locked), lk = BK.orders.filter(o => o.locked && !o.done);
+    $('list').innerHTML = `<div class="card order" id="sumbox"></div>
+      <div class="card order"><b>① 未鎖單訂單（勾選已收款的訂單來鎖單）</b>` +
+      (un.map(o => `<div class="row"><label><input type="checkbox" class="pk" value="${o.no}" onchange="refreshSum()"> ${o.no}</label><span>${o.cust}　${money(o.total)}</span></div>
+        <div class="row sub"><span>${itemsTxt(o)}</span><span>${o.paid ? '✓ 已收款' : `<button class="cancel" onclick="payOrder('${o.no}')">確認收款</button>`}</span></div>`).join('') || '<div class="row">沒有未鎖單訂單</div>') +
+      (un.length ? `<div class="row" style="margin-top:8px"><span>工廠付款單號</span><input id="payNo" style="width:50%;${inp}"></div><div style="text-align:right;margin-top:8px"><button class="go" onclick="doLock()">鎖單並叫貨</button></div>` : '') + `</div>
+      <div class="card order"><b>② 已鎖單訂單（填快遞單號、勾到貨、必要時拆單）</b>` + (lk.map(lockedRow).join('') || '<div class="row">沒有訂單</div>') + `</div>
+      <div class="card order"><b>叫貨批次</b>` + (BK.batches.map(b => `<div class="row"><b>${b.no}</b><span>${b.orders.length} 張訂單</span></div>
+        <div class="row sub"><span>${b.items.map(i => i.name + '・' + i.t + '×' + i.qty).join('、')}</span></div>
+        <div class="row"><span>付款單號</span><span><input id="bp_${b.no}" value="${b.payNo || ''}" style="width:130px;${inp}"> <button class="cancel" onclick="saveBatchPay('${b.no}')">儲存</button></span></div>${hr}`).join('') || '<div class="row">還沒有批次</div>') + `</div>`;
+    refreshSum();
   } catch (e) { toast(e.message); }
 }
-async function makeBatch() {
+async function payOrder(no) { try { await api('confirmPayment', { orderNo: no, confirm: true }); toast('已確認收款'); renderBackend(); } catch (e) { toast(e.message); } }
+async function doLock() {
   const nos = [...document.querySelectorAll('.pk:checked')].map(x => x.value);
   if (!nos.length) return toast('請先勾選訂單');
-  try { const r = await api('createBatch', { orderNos: nos }); toast('已建立 ' + r.batchNo); renderBackend(); } catch (e) { toast(e.message); }
+  if (!confirm('鎖單後，這 ' + nos.length + ' 張訂單客戶無法再取消。確定？')) return;
+  try { const r = await api('lockOrders', { orderNos: nos, payNo: $('payNo').value.trim() }); toast('已建立 ' + r.batchNo); renderBackend(); } catch (e) { toast(e.message); }
 }
-async function saveBatch(no) {
-  try { await api('updateBatch', { batchNo: no, paymentNo: $('pn_' + no).value.trim(), paid: $('pd_' + no).checked }); toast('已儲存'); } catch (e) { toast(e.message); }
+async function saveShip(no) {
+  try { await api('setShipping', { orderNo: no, track: $('tk_' + no).value.trim(), arrived: $('ar_' + no).checked }); toast('已儲存'); renderBackend(); } catch (e) { toast(e.message); }
 }
-async function markOrdered(no) {
-  if (!confirm('標記已叫貨後，批次內的訂單會鎖定，客戶無法再取消。確定？')) return;
-  try { await api('markOrdered', { batchNo: no, paymentNo: $('pn_' + no).value.trim() }); toast('已叫貨，訂單已鎖定'); renderBackend(); } catch (e) { toast(e.message); }
+async function saveBatchPay(no) {
+  try { await api('updateBatch', { batchNo: no, payNo: $('bp_' + no).value.trim() }); toast('已儲存'); } catch (e) { toast(e.message); }
+}
+function splitUi(no) {
+  const o = BK.orders.find(x => x.no === no);
+  $('sp_' + no).innerHTML = o.items.map(i => `<div class="row sub"><span>${i.name}・${ty(i)}（共 ${i.qty}）移到第2份</span><input type="number" min="0" max="${i.qty}" value="0" data-row="${i.row}" class="mv_${no}" style="width:64px;${inp}"></div>`).join('') +
+    `<div style="text-align:right;margin:6px 0"><button class="go" style="padding:6px 14px" onclick="doSplit('${no}')">確認拆單</button></div>`;
+}
+async function doSplit(no) {
+  const moves = [...document.querySelectorAll('.mv_' + no)].map(x => ({ row: Number(x.dataset.row), qty: Number(x.value) || 0 }));
+  if (!confirm('確定拆單？訂單編號會變成 _1、_2')) return;
+  try { const r = await api('splitOrder', { orderNo: no, moves }); toast('已拆為 ' + r.keep + ' 與 ' + r.created); renderBackend(); } catch (e) { toast(e.message); }
 }
 
 async function renderOrders() {
@@ -233,10 +257,12 @@ async function renderOrders() {
     const os = await api('myOrders');
     $('list').innerHTML = os.map(o => `
       <div class="card order">
-        <div class="row"><b>${o.no}</b><span class="tag">${o.status}${o.status === '有效' && !o.canCancel ? '・已鎖定' : ''}</span></div>
-        <div class="row" style="color:var(--sub)"><span>${new Date(o.time).toLocaleString('zh-TW')}</span><span>${money(o.total)}</span></div>
-        <hr style="border:0;border-top:1px solid var(--line);width:100%">
-        ${o.items.map(i => `<div class="row"><span>${i.name}${i.self ? '（自用）' : ''} × ${i.qty}</span><span>已到 ${i.arrived}／已出 ${i.shipped}</span></div>`).join('')}
+        <div class="row"><b>${o.no}</b><span class="tag">${o.stage}</span></div>
+        <div class="row" style="color:var(--sub)"><span>${new Date(o.time).toLocaleString('zh-TW')}</span><span>優惠價合計 ${money(o.total)}</span></div>
+        ${o.payNo ? `<div class="row sub"><span>付款單號：${o.payNo}</span></div>` : ''}
+        ${o.track ? `<div class="row sub"><span>快遞單號：${o.track}</span></div>` : ''}
+        ${hr}
+        ${o.items.map(i => `<div class="row"><span>${i.name}${i.self ? '（自用）' : ''} × ${i.qty}</span><span>${money(i.price)}</span></div>`).join('')}
         ${o.canCancel ? `<div style="text-align:right;margin-top:8px"><button class="cancel" onclick="cancelOrder('${o.no}')">取消訂單</button></div>` : ''}
       </div>`).join('') || '<div id="msg">還沒有訂單</div>';
   } catch (e) { toast(e.message); }
