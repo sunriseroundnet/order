@@ -60,7 +60,7 @@
 <script>
 // ===== 設定：換成你自己的 =====
 const CLIENT_ID = '741346122503-ognldu0voplsojqjk0cegrcrd4thun30.apps.googleusercontent.com';
-const API = 'https://script.google.com/macros/s/AKfycbwhrfM6ncR7qjASc65k4GivVmfPfrKjFS0Q6DGYrKDAsL7Y9BpL0WoeYHIGWMMbFQnD1Q/exec';
+const API = 'https://script.google.com/macros/s/AKfycbw_OlQv0bj5L90yuRux7M4DPdpsyhyGmS2f3Ca8UTrWfDaFCJDDVnhELshXTNmkZSpwPQ/exec';
 
 let token = '', products = [], qty = {}, sq = {}, selfMode = false, tabNo = 1;
 const $ = id => document.getElementById(id);
@@ -280,12 +280,11 @@ async function renderOrders() {
 let sigDrawn = false;
 function openShip(no) {
   const o = ORD.find(x => x.no === no);
-  const its = o.items.filter(i => !i.self);
-  if (!its.length) return toast('此訂單沒有需簽收的品項');
-  let tot = 0; its.forEach(i => tot += i.price * i.qty);
+  const its = o.items; // 自用品項也列入，價格一律用優惠價
+  let tot = 0; its.forEach(i => tot += i.sale * i.qty);
   $('shipm').innerHTML = `<div class="box"><b style="font-size:18px">出貨單　${o.no}</b>
     <div class="row sub" style="margin-top:6px"><span>付款單號：${o.payNo || '-'}</span><span>快遞單號：${o.track || '-'}</span></div>
-    ${its.map(i => `<div class="row"><span>${i.name} × ${i.qty}</span><span>${money(i.price * i.qty)}</span></div>`).join('')}
+    ${its.map(i => `<div class="row"><span>${i.name}${i.self ? '（自用）' : ''} × ${i.qty}</span><span>${money(i.sale * i.qty)}</span></div>`).join('')}
     <div class="row"><b>合計</b><b>${money(tot)}</b></div>
     <div style="margin-top:10px">下游客戶名稱<input class="f" id="sg_down"></div>
     <div>下游客戶電話<input class="f" id="sg_phone" inputmode="tel"></div>
