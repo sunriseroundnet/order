@@ -1,153 +1,211 @@
-<!DOCTYPE html>
-<html lang="zh-Hant">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>訂購單</title>
-<script src="https://accounts.google.com/gsi/client" async defer></script>
-<style>
-  :root { --bg:#f6f6f4; --card:#fff; --text:#222; --sub:#777; --line:#e4e4e0; --main:#1a73e8; --red:#d93025; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#161616; --card:#222; --text:#eee; --sub:#999; --line:#383838; --main:#6ea8fe; --red:#ff6b61; } }
-  * { box-sizing:border-box; }
-  body { margin:0; font-family:system-ui,"Noto Sans TC",sans-serif; background:var(--bg); color:var(--text); padding-bottom:90px; }
-  header { padding:14px 16px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); background:var(--card); position:sticky; top:0; z-index:5; }
-  nav { display:flex; gap:8px; padding:10px 16px; }
-  nav button { flex:1; padding:10px; border:1px solid var(--line); background:var(--card); color:var(--text); border-radius:8px; font-size:15px; }
-  nav button.on { background:var(--main); color:#fff; border-color:var(--main); }
-  .wrap { padding:0 16px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:12px; display:flex; gap:12px; }
-  .card img { width:84px; height:84px; object-fit:cover; border-radius:8px; background:var(--line); }
-  .info { flex:1; min-width:0; }
-  .name { font-weight:600; margin-bottom:4px; }
-  .old { text-decoration:line-through; color:var(--sub); font-size:14px; margin-right:6px; }
-  .sale { color:var(--red); font-weight:700; }
-  .qty { display:flex; align-items:center; gap:8px; margin-top:8px; }
-  .qty button { width:34px; height:34px; border-radius:50%; border:1px solid var(--line); background:var(--card); color:var(--text); font-size:18px; }
-  .qty input { width:54px; text-align:center; padding:6px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--text); font-size:16px; }
-  .bar { position:fixed; bottom:0; left:0; right:0; background:var(--card); border-top:1px solid var(--line); padding:12px 16px calc(12px + env(safe-area-inset-bottom)); display:flex; justify-content:space-between; align-items:center; }
-  .bar b { font-size:20px; }
-  .go { background:var(--main); color:#fff; border:0; padding:12px 24px; border-radius:10px; font-size:16px; }
-  .go:disabled { opacity:.5; }
-  .cancel { color:var(--red); border:1px solid var(--red); background:none; padding:6px 12px; border-radius:8px; }
-  .tag { font-size:12px; padding:2px 8px; border-radius:10px; background:var(--line); }
-  .order { display:block; }
-  .order .row { display:flex; justify-content:space-between; font-size:14px; padding:2px 0; }
-  #login, #msg { text-align:center; padding:40px 16px; color:var(--sub); }
-  #toast { position:fixed; top:70px; left:50%; transform:translateX(-50%); background:#333; color:#fff; padding:10px 18px; border-radius:20px; display:none; z-index:9; max-width:90%; }
-</style>
-</head>
-<body>
-<header><b>訂購單</b><span id="who" style="font-size:13px;color:var(--sub)"></span></header>
-<div id="login"><p>請使用被授權的 Google 帳號登入</p><div id="gbtn" style="display:inline-block"></div></div>
-<div id="app" style="display:none">
-  <nav><button id="t1" class="on" onclick="tab(1)">下單</button><button id="t2" onclick="tab(2)">我的訂單</button></nav>
-  <div class="wrap" id="list"></div>
-  <div class="bar" id="bar"><span>合計 <b id="total">$0</b></span><button class="go" id="submit" onclick="submitOrder()" disabled>送出訂單</button></div>
-</div>
-<div id="toast"></div>
-
-<script>
-// ===== 設定：換成你自己的 =====
+// ===== 設定 =====
 const CLIENT_ID = '741346122503-ognldu0voplsojqjk0cegrcrd4thun30.apps.googleusercontent.com';
-const API = 'https://script.google.com/macros/s/AKfycbwhrfM6ncR7qjASc65k4GivVmfPfrKjFS0Q6DGYrKDAsL7Y9BpL0WoeYHIGWMMbFQnD1Q/exec';
 
-let token = '', products = [], qty = {}, tabNo = 1;
-const $ = id => document.getElementById(id);
-const money = n => '$' + Number(n).toLocaleString();
-const toast = m => { const t = $('toast'); t.textContent = m; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 2800); };
-
-async function api(action, data) {
-  const r = await fetch(API, { method: 'POST', body: JSON.stringify(Object.assign({ idToken: token, action }, data)) });
-  const j = await r.json();
-  if (!j.ok) throw new Error(j.error);
-  return j.data;
-}
-
-window.onload = () => {
-  const iv = setInterval(() => {
-    if (!window.google) return;
-    clearInterval(iv);
-    google.accounts.id.initialize({ client_id: CLIENT_ID, callback: onLogin });
-    google.accounts.id.renderButton($('gbtn'), { theme: 'outline', size: 'large', locale: 'zh-TW' });
-  }, 200);
+const COL_ACTUAL = '訂貨後實際要支付的金額';
+const COL_SELF = '自用價格';
+const SCHEMA = {
+  '客戶': ['Email', '名稱', '角色', '啟用'],
+  '產品': ['編號', '品項', '分類', '品名', '原價', '優惠價', '照片', '上架', COL_ACTUAL, COL_SELF],
+  '訂單': ['訂單編號', '客戶Email', '下單時間', '總金額', '狀態', '批次編號', '鎖定', '付款確認', '付款確認時間'],
+  '訂單明細': ['訂單編號', '產品編號', '類型', '數量', '單價', '實付單價', '已到貨', '已出貨'], // 類型：一般 / 自用
+  '異動紀錄': ['時間', '操作者', '動作', '對象', '修改前', '修改後']
 };
 
-async function onLogin(resp) {
-  token = resp.credential;
+// 在編輯器選 setup 執行：建立缺少的分頁，並在既有分頁補上缺少的欄位標題（可重複執行）
+function setup() {
+  const ss = SpreadsheetApp.getActive();
+  Object.keys(SCHEMA).forEach(n => {
+    const sh = ss.getSheetByName(n) || ss.insertSheet(n);
+    if (sh.getLastRow() === 0) { sh.appendRow(SCHEMA[n]); sh.setFrozenRows(1); return; }
+    const h = hdr_(n);
+    SCHEMA[n].forEach(k => { if (h.indexOf(k) < 0) sh.getRange(1, sh.getLastColumn() + 1).setValue(k); });
+  });
+}
+
+// ===== 工具 =====
+const sh_ = n => SpreadsheetApp.getActive().getSheetByName(n);
+function rows_(n) {
+  const v = sh_(n).getDataRange().getValues();
+  const h = v.shift();
+  return v.map((r, i) => { const o = { _row: i + 2 }; h.forEach((k, j) => o[k] = r[j]); return o; });
+}
+function hdr_(n) { const s = sh_(n); return s.getRange(1, 1, 1, s.getLastColumn()).getValues()[0]; }
+// 依試算表實際標題列寫入，欄位順序可自行調整
+function add_(n, o) { sh_(n).appendRow(hdr_(n).map(k => o[k] === undefined ? '' : o[k])); }
+function set_(n, row, o) {
+  const h = hdr_(n);
+  Object.keys(o).forEach(k => { const c = h.indexOf(k); if (c >= 0) sh_(n).getRange(row, c + 1).setValue(o[k]); });
+}
+function log_(who, act, target, before, after) {
+  add_('異動紀錄', { '時間': new Date(), '操作者': who, '動作': act, '對象': target, '修改前': before || '', '修改後': after || '' });
+}
+function json_(o) {
+  return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
+}
+
+// ===== 登入驗證：每個請求都驗 ID Token + 白名單 =====
+function auth_(idToken) {
+  if (!idToken) throw new Error('請先登入');
+  const res = UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(idToken), { muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) throw new Error('登入已過期，請重新登入');
+  const t = JSON.parse(res.getContentText());
+  if (t.aud !== CLIENT_ID || t.email_verified !== 'true') throw new Error('登入驗證失敗');
+  const email = String(t.email).toLowerCase();
+  const u = rows_('客戶').find(r => String(r['Email']).toLowerCase() === email && r['啟用'] === '是');
+  if (!u) throw new Error('此帳號未被授權使用');
+  return { email: email, name: u['名稱'], role: u['角色'] };
+}
+const isStaff_ = u => u.role === 'admin' || u.role === '採購';
+
+// ===== API 入口 =====
+function doPost(e) {
   try {
-    const u = await api('me');
-    $('who').textContent = u.name;
-    $('login').style.display = 'none';
-    $('app').style.display = 'block';
-    products = await api('listProducts');
-    tab(1);
-  } catch (e) { toast(e.message); }
+    const req = JSON.parse(e.postData.contents);
+    const user = auth_(req.idToken);
+    const fn = ACTIONS[req.action];
+    if (!fn) throw new Error('未知的動作');
+    return json_({ ok: true, data: fn(user, req) });
+  } catch (err) {
+    return json_({ ok: false, error: err.message });
+  }
 }
 
-function tab(n) {
-  tabNo = n;
-  $('t1').className = n === 1 ? 'on' : ''; $('t2').className = n === 2 ? 'on' : '';
-  $('bar').style.display = n === 1 ? 'flex' : 'none';
-  n === 1 ? renderProducts() : renderOrders();
+const ACTIONS = { me, listProducts, placeOrder, myOrders, cancelOrder, adminSummary, myPayments, adminPayments, confirmPayment };
+
+function me(u) { return u; }
+
+// 注意：「訂貨後實際要支付的金額」不會傳給產品頁；自用價格傳出，但前端勾選「自用」才顯示
+function listProducts() {
+  return rows_('產品').filter(p => p['上架'] === '是').map(p => ({
+    id: p['編號'], name: p['品名'], item: p['品項'], cat: p['分類'], price: Number(p['原價']),
+    sale: p['優惠價'] === '' ? null : Number(p['優惠價']), photo: p['照片'],
+    self: p[COL_SELF] === '' ? null : Number(p[COL_SELF])
+  }));
 }
 
-function renderProducts() {
-  $('list').innerHTML = products.map(p => `
-    <div class="card">
-      <img src="${p.photo || ''}" alt="" loading="lazy">
-      <div class="info">
-        <div class="name">${p.name}</div>
-        <div>${p.sale != null ? `<span class="old">${money(p.price)}</span><span class="sale">${money(p.sale)}</span>` : `<span class="sale">${money(p.price)}</span>`}</div>
-        <div class="qty">
-          <button onclick="step('${p.id}',-1)">−</button>
-          <input type="number" min="0" inputmode="numeric" id="q_${p.id}" value="${qty[p.id] || 0}" onchange="setQ('${p.id}',this.value)">
-          <button onclick="step('${p.id}',1)">＋</button>
-        </div>
-      </div>
-    </div>`).join('') || '<div id="msg">目前沒有商品</div>';
-  calc();
-}
-function step(id, d) { setQ(id, (qty[id] || 0) + d); $('q_' + id).value = qty[id]; }
-function setQ(id, v) { v = Math.max(0, parseInt(v) || 0); qty[id] = v; calc(); }
-function calc() {
-  let t = 0, n = 0;
-  products.forEach(p => { const q = qty[p.id] || 0; t += (p.sale != null ? p.sale : p.price) * q; n += q; });
-  $('total').textContent = money(t);
-  $('submit').disabled = n === 0;
-}
-
-async function submitOrder() {
-  const items = products.filter(p => qty[p.id] > 0).map(p => ({ id: p.id, qty: qty[p.id] }));
-  if (!confirm('確定送出訂單？')) return;
-  $('submit').disabled = true;
+function placeOrder(u, req) {
+  const items = req.items || [];
+  if (!items.length) throw new Error('請至少選一項商品');
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
   try {
-    const r = await api('placeOrder', { items });
-    qty = {};
-    toast('已下單：' + r.orderNo + '，合計 ' + money(r.total));
-    renderProducts();
-  } catch (e) { toast(e.message); calc(); }
+    const prods = {};
+    rows_('產品').filter(p => p['上架'] === '是').forEach(p => prods[p['編號']] = p);
+    let total = 0;
+    const lines = items.map(it => {
+      const p = prods[it.id];
+      const qty = Number(it.qty);
+      const self = it.type === '自用';
+      if (!p) throw new Error('商品不存在或已下架：' + it.id);
+      if (!Number.isInteger(qty) || qty <= 0 || qty > 9999) throw new Error('數量不正確');
+      const sale = p['優惠價'] === '' ? Number(p['原價']) : Number(p['優惠價']);
+      let price = sale, actual = p[COL_ACTUAL] === '' ? sale : Number(p[COL_ACTUAL]);
+      if (self) {
+        if (p[COL_SELF] === '') throw new Error('此商品沒有自用價：' + p['品名']);
+        price = actual = Number(p[COL_SELF]); // 自用：優惠價欄與實付欄都採自用價（可依需求調整）
+      }
+      total += price * qty; // 訂單總金額 = 優惠價加總
+      return { id: p['編號'], name: p['品名'], type: self ? '自用' : '一般', qty: qty, price: price, actual: actual };
+    });
+    const day = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyyMMdd');
+    const no = 'O' + day + '-' + String(rows_('訂單').length + 1).padStart(4, '0');
+    add_('訂單', { '訂單編號': no, '客戶Email': u.email, '下單時間': new Date(), '總金額': total, '狀態': '有效', '批次編號': '', '鎖定': '否', '付款確認': '否' });
+    lines.forEach(l => add_('訂單明細', { '訂單編號': no, '產品編號': l.id, '類型': l.type, '數量': l.qty, '單價': l.price, '實付單價': l.actual, '已到貨': 0, '已出貨': 0 }));
+    log_(u.email, '下單', no, '', lines.map(l => l.name + (l.type === '自用' ? '(自用)' : '') + '×' + l.qty).join('、') + '，合計 ' + total);
+    return { orderNo: no, total: total };
+  } finally { lock.releaseLock(); }
 }
 
-async function renderOrders() {
-  $('list').innerHTML = '<div id="msg">載入中…</div>';
+function names_() { const m = {}; rows_('產品').forEach(p => m[p['編號']] = p['品名']); return m; }
+
+// 訂單頁：只有優惠價（不含實付金額）
+function myOrders(u) {
+  const names = names_();
+  const details = rows_('訂單明細');
+  return rows_('訂單').filter(o => String(o['客戶Email']).toLowerCase() === u.email).reverse().map(o => ({
+    no: o['訂單編號'], time: o['下單時間'], total: o['總金額'], status: o['狀態'],
+    canCancel: o['狀態'] === '有效' && !o['批次編號'] && o['鎖定'] !== '是',
+    items: details.filter(d => d['訂單編號'] === o['訂單編號']).map(d => ({
+      name: names[d['產品編號']] || d['產品編號'], self: d['類型'] === '自用', qty: d['數量'], price: d['單價'], arrived: d['已到貨'], shipped: d['已出貨']
+    }))
+  }));
+}
+
+function cancelOrder(u, req) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
   try {
-    const os = await api('myOrders');
-    $('list').innerHTML = os.map(o => `
-      <div class="card order">
-        <div class="row"><b>${o.no}</b><span class="tag">${o.status}${o.status === '有效' && !o.canCancel ? '・已鎖定' : ''}</span></div>
-        <div class="row" style="color:var(--sub)"><span>${new Date(o.time).toLocaleString('zh-TW')}</span><span>${money(o.total)}</span></div>
-        <hr style="border:0;border-top:1px solid var(--line);width:100%">
-        ${o.items.map(i => `<div class="row"><span>${i.name} × ${i.qty}</span><span>已到 ${i.arrived}／已出 ${i.shipped}</span></div>`).join('')}
-        ${o.canCancel ? `<div style="text-align:right;margin-top:8px"><button class="cancel" onclick="cancelOrder('${o.no}')">取消訂單</button></div>` : ''}
-      </div>`).join('') || '<div id="msg">還沒有訂單</div>';
-  } catch (e) { toast(e.message); }
+    const o = rows_('訂單').find(r => r['訂單編號'] === req.orderNo);
+    if (!o) throw new Error('找不到訂單');
+    if (String(o['客戶Email']).toLowerCase() !== u.email) throw new Error('不能取消別人的訂單');
+    if (o['狀態'] !== '有效') throw new Error('訂單已取消');
+    // 鎖單判斷只在後端：已掛入叫貨批次就不能取消
+    if (o['批次編號'] || o['鎖定'] === '是') throw new Error('訂單已叫貨，無法取消');
+    set_('訂單', o._row, { '狀態': '已取消' });
+    log_(u.email, '取消', o['訂單編號'], '有效', '已取消');
+    return { ok: true };
+  } finally { lock.releaseLock(); }
 }
 
-async function cancelOrder(no) {
-  if (!confirm('確定取消 ' + no + '？')) return;
-  try { await api('cancelOrder', { orderNo: no }); toast('已取消'); renderOrders(); }
-  catch (e) { toast(e.message); renderOrders(); }
+// 後台：品項加總（只計有效訂單）+ 各客戶數量
+function adminSummary(u) {
+  if (!isStaff_(u)) throw new Error('權限不足');
+  const names = {}, custs = {};
+  rows_('產品').forEach(p => names[p['編號']] = p['名稱']);
+  rows_('客戶').forEach(c => custs[String(c['Email']).toLowerCase()] = c['名稱']);
+  const valid = {};
+  rows_('訂單').filter(o => o['狀態'] === '有效').forEach(o => valid[o['訂單編號']] = String(o['客戶Email']).toLowerCase());
+  const sum = {};
+  rows_('訂單明細').forEach(d => {
+    const em = valid[d['訂單編號']];
+    if (!em) return;
+    const k = d['產品編號'];
+    sum[k] = sum[k] || { name: names[k] || k, total: 0, byCustomer: {} };
+    sum[k].total += Number(d['數量']);
+    const cn = custs[em] || em;
+    sum[k].byCustomer[cn] = (sum[k].byCustomer[cn] || 0) + Number(d['數量']);
+  });
+  return Object.keys(sum).map(k => Object.assign({ id: k }, sum[k]));
 }
-</script>
-</body>
-</html>
+
+// ===== 實際付款 =====
+function payInfo_(o, det, names) {
+  let st = 0, at = 0;
+  const items = det.filter(d => d['訂單編號'] === o['訂單編號']).map(d => {
+    const q = Number(d['數量']), sale = Number(d['單價']), act = d['實付單價'] === '' ? sale : Number(d['實付單價']);
+    st += sale * q; at += act * q;
+    return { name: names[d['產品編號']] || d['產品編號'], self: d['類型'] === '自用', qty: q, sale: sale, actual: act };
+  });
+  return { no: o['訂單編號'], items: items, saleTotal: st, actualTotal: at, confirmed: o['付款確認'] === '是' };
+}
+
+function myPayments(u) {
+  const names = names_(), det = rows_('訂單明細');
+  return rows_('訂單').filter(o => String(o['客戶Email']).toLowerCase() === u.email && o['狀態'] === '有效')
+    .reverse().map(o => payInfo_(o, det, names));
+}
+
+function adminPayments(u) {
+  if (u.role !== 'admin') throw new Error('權限不足');
+  const names = names_(), det = rows_('訂單明細'), custs = {};
+  rows_('客戶').forEach(c => custs[String(c['Email']).toLowerCase()] = c['名稱']);
+  return rows_('訂單').filter(o => o['狀態'] === '有效').reverse().map(o => {
+    const r = payInfo_(o, det, names);
+    r.cust = custs[String(o['客戶Email']).toLowerCase()] || o['客戶Email'];
+    return r;
+  });
+}
+
+function confirmPayment(u, req) {
+  if (u.role !== 'admin') throw new Error('權限不足');
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const o = rows_('訂單').find(r => r['訂單編號'] === req.orderNo);
+    if (!o) throw new Error('找不到訂單');
+    const on = req.confirm === true;
+    set_('訂單', o._row, { '付款確認': on ? '是' : '否', '付款確認時間': on ? new Date() : '' });
+    log_(u.email, on ? '確認收款' : '取消收款確認', o['訂單編號'], o['付款確認'] || '否', on ? '是' : '否');
+    return { ok: true };
+  } finally { lock.releaseLock(); }
+}
