@@ -38,6 +38,7 @@
   .selfrow { margin-top:8px; padding-top:8px; border-top:1px dashed var(--line); }
   .row.sub { font-size:13px; color:var(--sub); flex-wrap:wrap; gap:2px 12px; margin-bottom:4px; }
   nav { overflow-x:auto; } nav button { white-space:nowrap; flex:1 0 auto; padding:10px 14px; }
+  #busy { position:fixed; top:0; left:0; right:0; text-align:center; background:var(--main); color:#fff; font-size:13px; padding:3px; display:none; z-index:20; }
 </style>
 </head>
 <body>
@@ -48,6 +49,7 @@
   <div class="wrap" id="list"></div>
   <div class="bar" id="bar"><span>優惠價合計 <b id="total">$0</b></span><button class="go" id="submit" onclick="submitOrder()" disabled>送出訂單</button></div>
 </div>
+<div id="busy">處理中…</div>
 <div id="toast"></div>
 
 <script>
@@ -60,11 +62,15 @@ const $ = id => document.getElementById(id);
 const money = n => '$' + Number(n).toLocaleString();
 const toast = m => { const t = $('toast'); t.textContent = m; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 2800); };
 
+let busyN = 0;
 async function api(action, data) {
-  const r = await fetch(API, { method: 'POST', body: JSON.stringify(Object.assign({ idToken: token, action }, data)) });
-  const j = await r.json();
-  if (!j.ok) throw new Error(j.error);
-  return j.data;
+  busyN++; $('busy').style.display = 'block';
+  try {
+    const r = await fetch(API, { method: 'POST', body: JSON.stringify(Object.assign({ idToken: token, action }, data)) });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error);
+    return j.data;
+  } finally { if (--busyN === 0) $('busy').style.display = 'none'; }
 }
 
 window.onload = () => {
@@ -79,13 +85,13 @@ window.onload = () => {
 async function onLogin(resp) {
   token = resp.credential;
   try {
-    const u = await api('me');
+    const init = await api('init'); const u = init.user;
     $('who').textContent = u.name;
     if (u.role === 'admin') $('t4').style.display = '';
     if (u.role === 'admin' || u.role === '採購') $('t5').style.display = '';
     $('login').style.display = 'none';
     $('app').style.display = 'block';
-    products = await api('listProducts');
+    products = init.products;
     tab(1);
   } catch (e) { toast(e.message); }
 }
