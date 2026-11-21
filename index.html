@@ -286,8 +286,8 @@ function openShip(no) {
     <div class="row sub" style="margin-top:6px"><span>付款單號：${o.payNo || '-'}</span><span>快遞單號：${o.track || '-'}</span></div>
     ${its.map(i => `<div class="row"><span>${i.name}${i.self ? '（自用）' : ''} × ${i.qty}</span><span>${money(i.sale * i.qty)}</span></div>`).join('')}
     <div class="row"><b>合計</b><b>${money(tot)}</b></div>
-    <div style="margin-top:10px">下游客戶名稱<input class="f" id="sg_down"></div>
-    <div>下游客戶電話<input class="f" id="sg_phone" inputmode="tel"></div>
+    <div style="margin-top:10px">客戶名稱<input class="f" id="sg_down"></div>
+    <div>客戶電話<input class="f" id="sg_phone" inputmode="tel"></div>
     <div>簽收人姓名<input class="f" id="sg_name"></div>
     <div>請簽收人在下方簽名</div>
     <canvas id="sigc" width="720" height="360"></canvas>
